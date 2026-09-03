@@ -477,8 +477,7 @@
           "properties": {
             "issuer": {
               "type": "string",
-              "description": "This value will be used as the `issuer` in access and ID tokens. It must be specified and using HTTPS protocol, unless --dev is set. This should typically be equal to the public value.",
-              "format": "uri",
+              "description": "This value will be used as the `issuer` in access and ID tokens. It must be specified and use HTTPS unless --dev is set. Multiple issuer URLs may be provided as a comma-separated list; each URL must not contain a query or fragment. This should typically be equal to the public value.",
               "examples": ["https://localhost:4444/"]
             },
             "public": {

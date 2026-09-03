@@ -853,7 +853,7 @@ func (s *defaultStrategy) issueLogoutVerifier(ctx context.Context, w http.Respon
 		return nil, err
 	}
 
-	if !claims.VerifyIssuer(s.r.Config().IssuerURL(ctx).String(), true) {
+	if !s.r.Config().IssuerURLMatchesToken(ctx, mapx.GetStringDefault(claims, "iss", "")) {
 		return nil, errors.WithStack(fosite.ErrInvalidRequest.
 			WithHintf(
 				`Logout failed because issuer claim value '%s' from query parameter id_token_hint does not match with issuer value from configuration '%s'.`,

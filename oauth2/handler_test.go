@@ -377,6 +377,41 @@ func TestHandlerWellKnown(t *testing.T) {
 	})
 }
 
+func TestHandlerWellKnownMultipleIssuers(t *testing.T) {
+	reg := testhelpers.NewRegistryMemory(t, driver.WithConfigOptions(configx.WithValue(
+		config.KeyIssuerURL,
+		"https://one.example/idp/oauth2,https://two.example/idp/oauth2",
+	)))
+	testhelpers.MustEnsureRegistryKeys(t, reg, x.OpenIDConnectKeyName)
+
+	h := oauth2.NewHandler(reg)
+	router := httprouterx.NewRouterAdminWithPrefix()
+	h.SetPublicRoutes(router.ToPublic(), func(h http.Handler) http.Handler { return h })
+	h.SetAdminRoutes(router)
+
+	for _, tc := range []struct {
+		host   string
+		issuer string
+	}{
+		{host: "one.example", issuer: "https://one.example/idp/oauth2"},
+		{host: "two.example", issuer: "https://two.example/idp/oauth2"},
+	} {
+		t.Run(tc.host, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "http://hydra/.well-known/openid-configuration", nil)
+			req = req.WithContext(config.WithIssuerRequest(req.Context(), "https", tc.host))
+			resp := httptest.NewRecorder()
+			router.ServeHTTP(resp, req)
+
+			require.Equal(t, http.StatusOK, resp.Code)
+			var discovery hydra.OidcConfiguration
+			require.NoError(t, json.NewDecoder(resp.Body).Decode(&discovery))
+			assert.Equal(t, tc.issuer, discovery.Issuer)
+			assert.Equal(t, tc.issuer+"/oauth2/auth", discovery.AuthorizationEndpoint)
+			assert.Equal(t, tc.issuer+"/.well-known/jwks.json", discovery.JwksUri)
+		})
+	}
+}
+
 func TestHandlerOauthAuthorizationServer(t *testing.T) {
 	t.Parallel()
 
