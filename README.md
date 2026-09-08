@@ -29,6 +29,7 @@ consent app, giving you absolute control over the user interface and experience.
   - [Use Ory Hydra on the Ory Network](#use-ory-hydra-on-the-ory-network)
   - [Self-host Ory Hydra](#self-host-ory-hydra)
 - [Quickstart](#quickstart)
+- [Multiple issuer URLs](#multiple-issuer-urls)
 - [Who is using Ory Hydra](#who-is-using-ory-hydra)
 - [Ecosystem](#ecosystem)
   - [Ory Kratos: Identity and User Infrastructure and Management](#ory-kratos-identity-and-user-infrastructure-and-management)
@@ -242,6 +243,27 @@ ory perform authorization-code \
     --client-id <your-client-id> \
     --client-secret <your-client-secret>
 ```
+
+## Multiple issuer URLs
+
+`URLS_SELF_ISSUER` accepts either one issuer URL or a comma-separated list of
+issuer URLs. A single URL continues to work as before:
+
+```text
+URLS_SELF_ISSUER=https://idp.example.com/idp/oauth2
+```
+
+For multiple public hosts, configure every issuer URL in the list:
+
+```text
+URLS_SELF_ISSUER=https://10.0.0.1/idp/oauth2,https://10.0.0.2/idp/oauth2
+```
+
+Hydra selects the issuer whose scheme, host, and port match the incoming public
+request. Discovery metadata and token `iss` claims use that resolved issuer. A
+public request from a host that is not in the configured list is rejected. Each
+issuer must be a complete URL without a query string or fragment; HTTPS is
+required unless development mode is enabled.
 
 ## Who is using Ory Hydra
 

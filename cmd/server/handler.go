@@ -221,6 +221,18 @@ func publicServer(ctx context.Context, d *driver.RegistrySQL, sqaMetrics *metric
 		}
 		cors.New(cfg).ServeHTTP(w, r, next)
 	})
+	n.UseFunc(func(w http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+		scheme := "http"
+		if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+			scheme = "https"
+		}
+		ctx := config.WithIssuerRequest(r.Context(), scheme, r.Host)
+		if !d.Config().IssuerURLMatchesRequest(ctx) {
+			http.Error(w, "request host does not match a configured issuer", http.StatusMisdirectedRequest)
+			return
+		}
+		next(w, r.WithContext(ctx))
+	})
 	n.Use(sqaMetrics)
 
 	router.Handle("/", serverx.DefaultNotFoundHandler)

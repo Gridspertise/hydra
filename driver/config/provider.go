@@ -8,6 +8,7 @@ import (
 	"crypto/sha512"
 	"fmt"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -521,8 +522,102 @@ func (p *DefaultProvider) AdminURL(ctx context.Context) *url.URL {
 	)
 }
 
+type issuerRequestContextKey struct{}
+
+type issuerRequestContext struct {
+	scheme string
+	host   string
+}
+
+func WithIssuerRequest(ctx context.Context, scheme, host string) context.Context {
+	return context.WithValue(ctx, issuerRequestContextKey{}, issuerRequestContext{
+		scheme: scheme,
+		host:   host,
+	})
+}
+
+func (p *DefaultProvider) issuerURLs(ctx context.Context) ([]*url.URL, error) {
+	raw := strings.TrimSpace(p.getProvider(ctx).String(KeyIssuerURL))
+	if raw == "" {
+		return nil, nil
+	}
+
+	parts := strings.Split(raw, ",")
+	urls := make([]*url.URL, 0, len(parts))
+	for i, part := range parts {
+		value := strings.TrimSpace(part)
+		u, err := url.Parse(value)
+		if err != nil || value == "" || !u.IsAbs() || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return nil, errors.Errorf("invalid issuer URL at position %d: %q", i+1, value)
+		}
+		urls = append(urls, u)
+	}
+	return urls, nil
+}
+
+func (p *DefaultProvider) IssuerURLs(ctx context.Context) ([]*url.URL, error) {
+	return p.issuerURLs(ctx)
+}
+
+func (p *DefaultProvider) IssuerURLMatchesRequest(ctx context.Context) bool {
+	urls, err := p.issuerURLs(ctx)
+	if err != nil || len(urls) <= 1 {
+		return err == nil
+	}
+	request, ok := ctx.Value(issuerRequestContextKey{}).(issuerRequestContext)
+	if !ok {
+		return false
+	}
+	for _, issuer := range urls {
+		if issuer.Scheme == request.scheme && sameRequestHost(issuer.Host, request.host) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *DefaultProvider) IssuerURLMatchesToken(ctx context.Context, tokenIssuer string) bool {
+	urls, err := p.issuerURLs(ctx)
+	if err != nil {
+		return false
+	}
+	for _, issuer := range urls {
+		if issuer.String() == tokenIssuer {
+			return true
+		}
+	}
+	return len(urls) == 0 && p.IssuerURL(ctx).String() == tokenIssuer
+}
+
 func (p *DefaultProvider) IssuerURL(ctx context.Context) *url.URL {
-	return p.getProvider(ctx).RequestURIF(KeyIssuerURL, p.fallbackURL(ctx, "/", p.ServePublic(ctx)))
+	fallback := p.fallbackURL(ctx, "/", p.ServePublic(ctx))
+	urls, err := p.issuerURLs(ctx)
+	if err != nil || len(urls) == 0 {
+		return fallback
+	}
+	if len(urls) == 1 {
+		return urls[0]
+	}
+
+	request, ok := ctx.Value(issuerRequestContextKey{}).(issuerRequestContext)
+	if !ok {
+		return urls[0]
+	}
+	for _, issuer := range urls {
+		if issuer.Scheme == request.scheme && sameRequestHost(issuer.Host, request.host) {
+			return issuer
+		}
+	}
+	return urls[0]
+}
+
+func sameRequestHost(configuredHost, requestHost string) bool {
+	configuredHostname, configuredPort, configuredErr := net.SplitHostPort(configuredHost)
+	requestHostname, requestPort, requestErr := net.SplitHostPort(requestHost)
+	if configuredErr == nil && requestErr == nil {
+		return strings.EqualFold(configuredHostname, requestHostname) && configuredPort == requestPort
+	}
+	return strings.EqualFold(configuredHost, requestHost)
 }
 
 func (p *DefaultProvider) KratosAdminURL(ctx context.Context) (*url.URL, bool) {

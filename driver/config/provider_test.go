@@ -146,6 +146,64 @@ func TestProviderIssuerURL(t *testing.T) {
 	assert.Equal(t, "http://hydra.localhost", p.IssuerURL(t.Context()).String())
 }
 
+func TestProviderIssuerURLs(t *testing.T) {
+	p := newProvider(t, configx.WithValue(KeyIssuerURL, " https://one.example/idp/oauth2, https://two.example:9443/idp/oauth2 "))
+	urls, err := p.IssuerURLs(t.Context())
+	require.NoError(t, err)
+	require.Len(t, urls, 2)
+	assert.Equal(t, "https://one.example/idp/oauth2", urls[0].String())
+	assert.Equal(t, "https://two.example:9443/idp/oauth2", urls[1].String())
+
+	ctx := WithIssuerRequest(t.Context(), "https", "two.example:9443")
+	assert.Equal(t, "https://two.example:9443/idp/oauth2", p.IssuerURL(ctx).String())
+	assert.True(t, p.IssuerURLMatchesRequest(ctx))
+	assert.True(t, p.IssuerURLMatchesToken(t.Context(), "https://one.example/idp/oauth2"))
+	assert.True(t, p.IssuerURLMatchesToken(t.Context(), "https://two.example:9443/idp/oauth2"))
+	assert.False(t, p.IssuerURLMatchesToken(t.Context(), "https://other.example/idp/oauth2"))
+	assert.False(t, p.IssuerURLMatchesRequest(WithIssuerRequest(t.Context(), "https", "other.example")))
+}
+
+func TestProviderIssuerURLsRejectInvalidValues(t *testing.T) {
+	for _, value := range []string{
+		"https://valid.example,idont-have-a-scheme",
+		"https://valid.example,",
+		"https://valid.example, /relative",
+		"https://valid.example?query=value",
+		"https://user:pass@valid.example",
+		"https://valid.example#fragment",
+	} {
+		p := newProvider(t, configx.WithValue(KeyIssuerURL, value))
+		_, err := p.IssuerURLs(t.Context())
+		assert.Error(t, err, value)
+	}
+}
+
+func TestProviderIssuerURLsEmpty(t *testing.T) {
+	for _, p := range []*DefaultProvider{
+		newProvider(t, configx.WithValue(KeyIssuerURL, "")),
+		newProvider(t),
+	} {
+		urls, err := p.IssuerURLs(t.Context())
+		require.NoError(t, err)
+		assert.Empty(t, urls)
+	}
+}
+
+func TestValidateIssuerURLs(t *testing.T) {
+	p := newProvider(t, configx.WithValue(KeyIssuerURL, "https://valid.example,not-a-url"))
+	err := Validate(t.Context(), logrusx.New("", ""), p)
+	assert.Error(t, err)
+
+	p = newProvider(t, configx.WithValue(KeyIssuerURL, "https://one.example/idp/oauth2,https://two.example/idp/oauth2"))
+	assert.NoError(t, Validate(t.Context(), logrusx.New("", ""), p))
+
+	p = newProvider(t, configx.WithValues(map[string]any{
+		KeyIssuerURL:       "http://one.example/idp/oauth2,https://two.example/idp/oauth2",
+		KeyDevelopmentMode: false,
+	}))
+	assert.Error(t, Validate(t.Context(), logrusx.New("", ""), p))
+}
+
 func TestProviderIssuerPublicURL(t *testing.T) {
 	p := newProvider(t, configx.WithValues(map[string]any{
 		KeyIssuerURL: "http://hydra.localhost",

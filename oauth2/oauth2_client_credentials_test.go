@@ -26,7 +26,9 @@ import (
 	"github.com/ory/hydra/v2/flow"
 	"github.com/ory/hydra/v2/internal/testhelpers"
 	hydraoauth2 "github.com/ory/hydra/v2/oauth2"
+	"github.com/ory/hydra/v2/x"
 	"github.com/ory/x/configx"
+	"github.com/ory/x/httprouterx"
 )
 
 func TestClientCredentials(t *testing.T) {
@@ -383,4 +385,54 @@ func TestClientCredentials(t *testing.T) {
 		t.Run("strategy=opaque", run("opaque"))
 		t.Run("strategy=jwt", run("jwt"))
 	})
+}
+
+func TestClientCredentialsMultipleIssuerTokenIss(t *testing.T) {
+	ctx := context.Background()
+	reg := testhelpers.NewRegistryMemory(t, driver.WithConfigOptions(configx.WithValues(map[string]any{
+		config.KeyAccessTokenStrategy: "jwt",
+		config.KeyIssuerURL:           "https://one.example/idp/oauth2,https://two.example/idp/oauth2",
+	})))
+	testhelpers.MustEnsureRegistryKeys(t, reg, x.OAuth2JWTKeyName)
+
+	client := &hc.Client{
+		Secret:     uuid.Must(uuid.NewV4()).String(),
+		GrantTypes: []string{"client_credentials"},
+		Scope:      "foobar",
+	}
+	clientSecret := client.Secret
+	require.NoError(t, reg.ClientManager().CreateClient(ctx, client))
+
+	router := httprouterx.NewRouterPublic()
+	reg.RegisterPublicRoutes(ctx, router)
+
+	for _, tc := range []struct {
+		host   string
+		issuer string
+	}{
+		{host: "one.example", issuer: "https://one.example/idp/oauth2"},
+		{host: "two.example", issuer: "https://two.example/idp/oauth2"},
+	} {
+		t.Run(tc.host, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "http://hydra/oauth2/token", strings.NewReader(url.Values{
+				"grant_type": {"client_credentials"},
+				"scope":      {"foobar"},
+			}.Encode()))
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			request.SetBasicAuth(client.GetID(), clientSecret)
+			request = request.WithContext(config.WithIssuerRequest(request.Context(), "https", tc.host))
+
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+
+			var tokenResponse struct {
+				AccessToken string `json:"access_token"`
+			}
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &tokenResponse))
+			require.NotEmpty(t, tokenResponse.AccessToken)
+			claims := gjson.ParseBytes(testhelpers.InsecureDecodeJWT(t, tokenResponse.AccessToken))
+			assert.Equal(t, tc.issuer, claims.Get("iss").String())
+		})
+	}
 }
